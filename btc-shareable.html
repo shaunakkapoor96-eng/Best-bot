@@ -1,0 +1,453 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BTC 5-Min Prediction Bot</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#080c18;color:#e0e6f0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;padding:16px;min-height:100vh}
+#top-bar{text-align:center;margin-bottom:20px}
+#window-label{font-size:.8em;color:#4a5580;letter-spacing:2px;text-transform:uppercase;margin-bottom:4px}
+#countdown{font-size:5.5em;font-weight:900;font-family:monospace;color:#00cfff;line-height:1;letter-spacing:-2px;text-shadow:0 0 40px rgba(0,207,255,.3);transition:color .3s}
+#countdown.locked{color:#f59e0b;text-shadow:0 0 40px rgba(245,158,11,.3)}
+#countdown.urgent{color:#ef4444;text-shadow:0 0 40px rgba(239,68,68,.4)}
+#bet-signal{font-size:1em;font-weight:700;margin-top:8px;padding:8px 20px;border-radius:20px;display:inline-block;letter-spacing:1px}
+#bet-signal.waiting{background:rgba(74,85,128,.3);color:#4a5580}
+#bet-signal.bet-now{background:rgba(16,185,129,.2);color:#10b981;border:1px solid #10b981;animation:pulse-border 1s infinite}
+#bet-signal.locked{background:rgba(245,158,11,.15);color:#f59e0b}
+#bet-signal.skip{background:rgba(239,68,68,.15);color:#ef4444}
+#bet-signal.closing{background:rgba(239,68,68,.15);color:#ef4444}
+@keyframes pulse-border{0%,100%{box-shadow:0 0 0 0 rgba(16,185,129,.4)}50%{box-shadow:0 0 0 6px rgba(16,185,129,0)}}
+#main-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;margin-bottom:14px}
+@media(max-width:600px){#main-grid{grid-template-columns:1fr 1fr}#signals-grid{grid-template-columns:repeat(3,1fr)}#stats-grid{grid-template-columns:repeat(2,1fr)}}
+.card{background:#0f1629;border:1px solid #1a2444;border-radius:14px;padding:20px 22px}
+.card-label{font-size:.7em;text-transform:uppercase;letter-spacing:2px;color:#4a5580;margin-bottom:8px}
+.card-value{font-size:2.3em;font-weight:700;color:#fff}
+.card-value.up{color:#10b981}.card-value.down{color:#ef4444}
+#delta{font-size:1em;margin-top:6px;font-weight:600;color:#4a5580}
+#pred-card{background:#0f1629;border:2px solid #1a2444;border-radius:14px;padding:20px 22px;transition:background .5s,border-color .5s;position:relative}
+#pred-card.up{background:#061a0f;border-color:#10b981}
+#pred-card.down{background:#1a0608;border-color:#ef4444}
+#pred-card.locked::after{content:'LOCKED IN';position:absolute;top:10px;right:14px;font-size:.6em;letter-spacing:2px;color:#f59e0b;font-weight:700}
+#pred-dir{font-size:2.3em;font-weight:900;margin-bottom:4px}
+#pred-conf{font-size:1em;opacity:.85}
+#signals-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-bottom:14px}
+.sig-card{background:#0f1629;border:1px solid #1a2444;border-radius:10px;padding:12px 14px;text-align:center}
+.sig-name{font-size:.62em;text-transform:uppercase;letter-spacing:1.5px;color:#4a5580;margin-bottom:5px}
+.sig-value{font-size:1.1em;font-weight:700}
+.sig-value.bull{color:#10b981}.sig-value.bear{color:#ef4444}.sig-value.neut{color:#94a3b8}
+.sig-bar{height:3px;border-radius:2px;margin-top:5px;background:#1a2444;position:relative;overflow:hidden}
+.sig-bar-fill{height:100%;border-radius:2px;position:absolute;left:50%;transform:translateX(-50%);transition:width .3s}
+#chart-card{background:#0f1629;border:1px solid #1a2444;border-radius:14px;padding:20px;margin-bottom:14px}
+#chart-card h3{font-size:.7em;text-transform:uppercase;letter-spacing:2px;color:#4a5580;margin-bottom:14px}
+#chart-wrap{height:260px}
+#stats-card{background:#0f1629;border:1px solid #1a2444;border-radius:14px;padding:20px 22px}
+#stats-card h3{font-size:.7em;text-transform:uppercase;letter-spacing:2px;color:#4a5580;margin-bottom:14px}
+#stats-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:20px}
+.stat{text-align:center;padding:14px;background:#080c18;border-radius:10px}
+.stat-v{font-size:1.8em;font-weight:700;color:#00cfff}
+.stat-l{font-size:.68em;text-transform:uppercase;letter-spacing:1px;color:#4a5580;margin-top:4px}
+#band-table{width:100%;border-collapse:collapse;font-size:.85em}
+#band-table th{color:#4a5580;font-size:.7em;text-transform:uppercase;letter-spacing:1px;padding:6px 10px;text-align:left}
+#band-table td{padding:9px 10px;border-top:1px solid #1a2444}
+#status-bar{text-align:center;font-size:.72em;color:#4a5580;margin-top:12px}
+#ws-dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:#ef4444;margin-right:6px;animation:blink 1.5s infinite}
+#ws-dot.live{background:#10b981}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.2}}
+</style>
+</head>
+<body>
+
+<div id="top-bar">
+  <div id="window-label">Current ET Window</div>
+  <div id="countdown">5:00</div>
+  <div id="bet-signal" class="waiting">⏳ Gathering signals...</div>
+</div>
+
+<div id="main-grid">
+  <div class="card">
+    <div class="card-label">Price to Beat</div>
+    <div class="card-value" id="start-p">--</div>
+  </div>
+  <div class="card">
+    <div class="card-label">Current Price</div>
+    <div class="card-value" id="cur-p">--</div>
+    <div id="delta">--</div>
+  </div>
+  <div id="pred-card">
+    <div class="card-label">AI Prediction</div>
+    <div id="pred-dir">--</div>
+    <div id="pred-conf">Initializing...</div>
+  </div>
+</div>
+
+<div id="signals-grid">
+  <div class="sig-card"><div class="sig-name">Order Book</div><div class="sig-value neut" id="sig-ob">--</div><div class="sig-bar"><div class="sig-bar-fill" id="bar-ob" style="width:0%;background:#94a3b8"></div></div></div>
+  <div class="sig-card"><div class="sig-name">CVD Delta</div><div class="sig-value neut" id="sig-cvd">--</div><div class="sig-bar"><div class="sig-bar-fill" id="bar-cvd" style="width:0%;background:#94a3b8"></div></div></div>
+  <div class="sig-card"><div class="sig-name">RSI (14)</div><div class="sig-value neut" id="sig-rsi">--</div><div class="sig-bar"><div class="sig-bar-fill" id="bar-rsi" style="width:0%;background:#94a3b8"></div></div></div>
+  <div class="sig-card"><div class="sig-name">EMA Trend</div><div class="sig-value neut" id="sig-ema">--</div><div class="sig-bar"><div class="sig-bar-fill" id="bar-ema" style="width:0%;background:#94a3b8"></div></div></div>
+  <div class="sig-card"><div class="sig-name">VWAP</div><div class="sig-value neut" id="sig-vwap">--</div><div class="sig-bar"><div class="sig-bar-fill" id="bar-vwap" style="width:0%;background:#94a3b8"></div></div></div>
+</div>
+
+<div id="chart-card">
+  <h3>Live BTC Price</h3>
+  <div id="chart-wrap"><canvas id="myChart"></canvas></div>
+</div>
+
+<div id="stats-card">
+  <h3>Bot Performance</h3>
+  <div id="stats-grid">
+    <div class="stat"><div class="stat-v" id="s-total">0</div><div class="stat-l">Candles</div></div>
+    <div class="stat"><div class="stat-v" id="s-wl">0W-0L</div><div class="stat-l">Win-Loss</div></div>
+    <div class="stat"><div class="stat-v" id="s-rate">--%</div><div class="stat-l">Win Rate</div></div>
+    <div class="stat"><div class="stat-v" id="s-streak">--</div><div class="stat-l">Streak</div></div>
+  </div>
+  <div style="font-size:.7em;text-transform:uppercase;letter-spacing:2px;color:#4a5580;margin-bottom:10px">Win Rate by Confidence Band</div>
+  <table id="band-table">
+    <thead><tr><th>Band</th><th>Action</th><th>Bets</th><th>W-L</th><th>Win Rate</th><th style="width:100px">Bar</th></tr></thead>
+    <tbody id="band-rows"></tbody>
+  </table>
+</div>
+
+<div id="status-bar">
+  <span id="ws-dot"></span><span id="ws-status">Connecting to Bybit...</span>
+</div>
+
+<script>
+// ── TIME ──────────────────────────────────────────────────────────────
+function getET() {
+  const now = new Date();
+  return new Date(now.getTime() + now.getTimezoneOffset()*60000 + -5*3600000);
+}
+function getCandleEndMs() {
+  const et = getET();
+  const secsIn = (et.getUTCMinutes()%5)*60 + et.getUTCSeconds();
+  return Date.now() + (300-secsIn)*1000 - et.getUTCMilliseconds();
+}
+function getWindowLabel() {
+  const et = getET();
+  const h=et.getUTCHours(), m=et.getUTCMinutes();
+  const s0=Math.floor(m/5)*5, s1=s0+5;
+  const fmt=(hh,mm)=>{const ap=hh>=12?'PM':'AM';return`${hh%12||12}:${(mm>=60?0:mm).toString().padStart(2,'0')} ${ap}`};
+  return `${fmt(h,s0)} – ${fmt(s1>=60?h+1:h,s1)} ET`;
+}
+
+// ── STATE ─────────────────────────────────────────────────────────────
+let startPrice=null, latestPrice=null, candleEndMs=null;
+let closing=false, predLocked=false, lockedPred=null;
+let priceHistory=[], bestBid=null, bestBidSize=null, bestAsk=null, bestAskSize=null;
+let cvd=0, vwapNumer=0, vwapDenom=0, predictions=[], chartObj=null;
+
+// ── TAB SYNC ──────────────────────────────────────────────────────────
+const ch = new BroadcastChannel('btc_bot_v5');
+let isMaster=false, masterSeen=0;
+
+function electMaster() {
+  ch.postMessage({type:'PING'});
+  setTimeout(()=>{
+    if(Date.now()-masterSeen>600){
+      isMaster=true;
+      document.getElementById('ws-status').textContent='Live · Bybit [MASTER TAB]';
+      connectBybit();
+      setInterval(broadcastState,200);
+    } else {
+      document.getElementById('ws-status').textContent='🔗 Synced from master tab';
+      document.getElementById('ws-dot').classList.add('live');
+    }
+  },600);
+}
+
+ch.onmessage=e=>{
+  const msg=e.data;
+  if(msg.type==='PING'&&isMaster) ch.postMessage({type:'PONG'});
+  if(msg.type==='PONG') masterSeen=Date.now();
+  if(msg.type==='STATE'&&!isMaster){
+    masterSeen=Date.now();
+    const s=msg.state;
+    startPrice=s.startPrice; latestPrice=s.latestPrice; candleEndMs=s.candleEndMs;
+    predLocked=s.predLocked; lockedPred=s.lockedPred;
+    priceHistory=s.priceHistory||[]; predictions=s.predictions||[];
+    cvd=s.cvd||0; vwapNumer=s.vwapNumer||0; vwapDenom=s.vwapDenom||0;
+    bestBid=s.bestBid; bestBidSize=s.bestBidSize; bestAsk=s.bestAsk; bestAskSize=s.bestAskSize;
+    if(startPrice){
+      document.getElementById('window-label').textContent=getWindowLabel();
+      document.getElementById('start-p').textContent='$'+startPrice.toFixed(2);
+    }
+    updateChart(); updateStats(); updateBandTable();
+  }
+};
+
+function broadcastState(){
+  if(!isMaster)return;
+  ch.postMessage({type:'STATE',state:{
+    startPrice,latestPrice,candleEndMs,predLocked,lockedPred,
+    priceHistory:priceHistory.slice(-120),predictions,
+    cvd,vwapNumer,vwapDenom,bestBid,bestBidSize,bestAsk,bestAskSize
+  }});
+}
+
+// ── INDICATORS ────────────────────────────────────────────────────────
+function calcRSI(p){
+  if(p.length<15)return null;
+  const s=p.slice(-15); let g=0,l=0;
+  for(let i=1;i<s.length;i++){const d=s[i]-s[i-1];d>0?g+=d:l-=d}
+  return 100-100/(1+g/(l||.0001));
+}
+function calcEMA(p,n){
+  if(p.length<n)return null;
+  const k=2/(n+1); let e=p.slice(0,n).reduce((a,b)=>a+b,0)/n;
+  for(let i=n;i<p.length;i++) e=p[i]*k+e*(1-k);
+  return e;
+}
+function calcOBI(){
+  if(!bestBid||!bestAsk||!bestBidSize||!bestAskSize)return 0;
+  const t=bestBidSize+bestAskSize; return t?( bestBidSize-bestAskSize)/t:0;
+}
+function calcVWAP(){ return vwapDenom>0?vwapNumer/vwapDenom:null; }
+
+// ── PREDICTION ────────────────────────────────────────────────────────
+function computePrediction(){
+  if(!startPrice||!latestPrice)return null;
+  let up=0,dn=0; const bd={};
+
+  // 1. Order Book Imbalance (25%)
+  const obi=calcOBI();
+  if(obi>.15){up+=25*Math.min(obi/.5,1);bd.ob={label:`▲ Bid-heavy`,cls:'bull',raw:obi}}
+  else if(obi<-.15){dn+=25*Math.min(Math.abs(obi)/.5,1);bd.ob={label:`▼ Ask-heavy`,cls:'bear',raw:Math.abs(obi)}}
+  else bd.ob={label:'— Balanced',cls:'neut',raw:0};
+
+  // 2. CVD (25%)
+  const cvdN=Math.min(Math.abs(cvd)/50,1);
+  if(cvd>5){up+=25*cvdN;bd.cvd={label:`▲ +${cvd.toFixed(1)}`,cls:'bull',raw:cvdN}}
+  else if(cvd<-5){dn+=25*cvdN;bd.cvd={label:`▼ ${cvd.toFixed(1)}`,cls:'bear',raw:cvdN}}
+  else bd.cvd={label:'— Neutral',cls:'neut',raw:0};
+
+  // 3. RSI (20%)
+  const rsi=calcRSI(priceHistory);
+  if(rsi!==null){
+    if(rsi<35){up+=20*((35-rsi)/35);bd.rsi={label:`▲ ${rsi.toFixed(1)} OS`,cls:'bull',raw:(35-rsi)/35}}
+    else if(rsi>65){dn+=20*((rsi-65)/35);bd.rsi={label:`▼ ${rsi.toFixed(1)} OB`,cls:'bear',raw:(rsi-65)/35}}
+    else bd.rsi={label:`— ${rsi.toFixed(1)}`,cls:'neut',raw:0};
+  } else bd.rsi={label:'Loading...',cls:'neut',raw:0};
+
+  // 4. EMA (15%)
+  const e9=calcEMA(priceHistory,9), e21=calcEMA(priceHistory,21);
+  if(e9&&e21){
+    if(latestPrice>e9&&e9>e21){up+=15;bd.ema={label:'▲ Bullish',cls:'bull',raw:1}}
+    else if(latestPrice<e9&&e9<e21){dn+=15;bd.ema={label:'▼ Bearish',cls:'bear',raw:1}}
+    else bd.ema={label:'— Mixed',cls:'neut',raw:0};
+  } else bd.ema={label:'Loading...',cls:'neut',raw:0};
+
+  // 5. VWAP (15%)
+  const vwap=calcVWAP();
+  if(vwap){
+    const dev=(latestPrice-vwap)/vwap*100;
+    if(dev>.01){up+=15*Math.min(dev/.1,1);bd.vwap={label:`▲ +${dev.toFixed(3)}%`,cls:'bull',raw:Math.min(dev/.1,1)}}
+    else if(dev<-.01){dn+=15*Math.min(Math.abs(dev)/.1,1);bd.vwap={label:`▼ ${dev.toFixed(3)}%`,cls:'bear',raw:Math.min(Math.abs(dev)/.1,1)}}
+    else bd.vwap={label:'— At VWAP',cls:'neut',raw:0};
+  } else bd.vwap={label:'Loading...',cls:'neut',raw:0};
+
+  const total=up+dn; if(!total)return null;
+  return{dir:up>=dn?'UP':'DOWN',conf:Math.round(Math.max(up,dn)/total*100),breakdown:bd};
+}
+
+// ── CANDLE ────────────────────────────────────────────────────────────
+function openCandle(price){
+  startPrice=price; candleEndMs=getCandleEndMs();
+  closing=false; predLocked=false; lockedPred=null;
+  cvd=0; vwapNumer=0; vwapDenom=0;
+  document.getElementById('window-label').textContent=getWindowLabel();
+  document.getElementById('start-p').textContent='$'+price.toFixed(2);
+  document.getElementById('pred-card').classList.remove('locked','up','down');
+  console.log(`🆕 Candle | $${price.toFixed(2)} | ${getWindowLabel()} | ${Math.round((candleEndMs-Date.now())/1000)}s left`);
+}
+
+function closeCandle(){
+  if(closing||!startPrice||!latestPrice)return;
+  closing=true;
+  const pred=lockedPred||computePrediction();
+  const actual=latestPrice>=startPrice?'UP':'DOWN';
+  const won=pred&&pred.dir===actual;
+  predictions.push({startPrice,endPrice:latestPrice,pred,actual,won});
+  console.log(`✅ ${startPrice.toFixed(2)}→${latestPrice.toFixed(2)} pred=${pred?.dir} actual=${actual} ${won?'WIN ✅':'LOSS ❌'}`);
+  updateStats(); updateBandTable();
+  setTimeout(()=>openCandle(latestPrice),400);
+}
+
+// ── TICK (100ms) ──────────────────────────────────────────────────────
+const BANDS=[
+  {min:90,max:100,label:'90–100%',action:'🔥 SLAM IT',color:'#10b981'},
+  {min:75,max:89, label:'75–89%', action:'✅ STRONG BET',color:'#34d399'},
+  {min:65,max:74, label:'65–74%', action:'⚡ BET (½ size)',color:'#f59e0b'},
+  {min:55,max:64, label:'55–64%', action:'⛔ SKIP',color:'#ef4444'},
+  {min:0, max:54, label:'<55%',   action:'⛔ HARD SKIP',color:'#7f1d1d'},
+];
+function getBand(c){return BANDS.find(b=>c>=b.min&&c<=b.max)||BANDS[BANDS.length-1]}
+
+function tick(){
+  if(!startPrice||!latestPrice||!candleEndMs)return;
+  const msLeft=candleEndMs-Date.now();
+  const elapsed=300000-msLeft;
+
+  // Lock at 60s
+  if(elapsed>=60000&&!predLocked){
+    lockedPred=computePrediction(); predLocked=true;
+    document.getElementById('pred-card').classList.add('locked');
+    console.log(`🔒 LOCKED: ${lockedPred?.dir} @ ${lockedPred?.conf}%`);
+  }
+
+  // Bet signal
+  const betEl=document.getElementById('bet-signal');
+  if(elapsed>=45000&&elapsed<=90000&&lockedPred){
+    const skip=lockedPred.conf<65;
+    betEl.className=skip?'skip':'bet-now';
+    betEl.textContent=skip
+      ?`⛔ SKIP — ${lockedPred.conf}% confidence (need 65%+)`
+      :`${getBand(lockedPred.conf).action} — ${lockedPred.dir} @ ${lockedPred.conf}%`;
+  } else if(predLocked&&elapsed>90000){
+    betEl.className='locked';
+    betEl.textContent=`🔒 ${lockedPred.dir} @ ${lockedPred.conf}% — ${getBand(lockedPred.conf).action}`;
+  } else if(msLeft<=15000){
+    betEl.className='closing'; betEl.textContent='⚠️ Candle closing soon...';
+  } else {
+    betEl.className='waiting';
+    betEl.textContent=elapsed<30000?'⏳ Gathering signals...':'📊 Analyzing...';
+  }
+
+  // Countdown
+  const cdEl=document.getElementById('countdown');
+  if(msLeft<=0){cdEl.textContent='0:00';cdEl.className='urgent';closeCandle();return}
+  const mins=Math.floor(msLeft/60000), secs=Math.floor(msLeft%60000/1000);
+  cdEl.textContent=`${mins}:${secs.toString().padStart(2,'0')}`;
+  cdEl.className=predLocked?'locked':msLeft<15000?'urgent':'';
+
+  // Prices + delta
+  document.getElementById('cur-p').textContent='$'+latestPrice.toFixed(2);
+  const diff=latestPrice-startPrice, pct=diff/startPrice*100;
+  const sign=diff>=0?'+':'';
+  document.getElementById('cur-p').className='card-value '+(diff>0?'up':diff<0?'down':'');
+  const deltaEl=document.getElementById('delta');
+  deltaEl.textContent=`${sign}$${diff.toFixed(2)}  (${sign}${pct.toFixed(3)}%)`;
+  deltaEl.style.color=diff>0?'#10b981':diff<0?'#ef4444':'#4a5580';
+
+  // Prediction
+  const pred=lockedPred||computePrediction();
+  if(pred){
+    const pc=document.getElementById('pred-card');
+    pc.className=(predLocked?'locked ':'')+pred.dir.toLowerCase();
+    document.getElementById('pred-dir').textContent=pred.dir==='UP'?'📈 UP':'📉 DOWN';
+    document.getElementById('pred-conf').textContent=`${pred.conf}% Confidence`;
+    renderSignals(pred.breakdown);
+  }
+}
+
+function renderSignals(bd){
+  if(!bd)return;
+  const map={ob:'ob',cvd:'cvd',rsi:'rsi',ema:'ema',vwap:'vwap'};
+  for(const[key]of Object.entries(map)){
+    const sig=bd[key]; if(!sig)continue;
+    const el=document.getElementById('sig-'+key);
+    const bar=document.getElementById('bar-'+key);
+    el.textContent=sig.label; el.className='sig-value '+sig.cls;
+    const pct=Math.min((sig.raw||0)*100,100);
+    const col=sig.cls==='bull'?'#10b981':sig.cls==='bear'?'#ef4444':'#94a3b8';
+    bar.style.width=pct+'%'; bar.style.background=col;
+  }
+}
+
+// ── STATS ─────────────────────────────────────────────────────────────
+function updateStats(){
+  const total=predictions.length, wins=predictions.filter(p=>p.won).length;
+  const losses=total-wins, rate=total?Math.round(wins/total*100):0;
+  let streak=0, sType='';
+  if(total>0){
+    sType=predictions[total-1].won?'W':'L';
+    for(let i=total-1;i>=0;i--){if(predictions[i].won===(sType==='W'))streak++;else break}
+  }
+  document.getElementById('s-total').textContent=total;
+  document.getElementById('s-wl').textContent=`${wins}W-${losses}L`;
+  document.getElementById('s-rate').textContent=rate+'%';
+  document.getElementById('s-streak').textContent=streak?`${streak}${sType}`:'--';
+  updateBandTable();
+}
+
+function updateBandTable(){
+  const rows=document.getElementById('band-rows');
+  rows.innerHTML=BANDS.map(band=>{
+    const inB=predictions.filter(p=>p.pred&&p.pred.conf>=band.min&&p.pred.conf<=band.max);
+    const wins=inB.filter(p=>p.won).length, total=inB.length;
+    const rate=total?Math.round(wins/total*100):null;
+    const col=rate>=60?'#10b981':rate>=50?'#f59e0b':rate!=null?'#ef4444':'#1a2444';
+    return`<tr>
+      <td style="font-weight:700;color:${band.color}">${band.label}</td>
+      <td style="color:#94a3b8;font-size:.82em">${band.action}</td>
+      <td style="text-align:center;color:#e0e6f0">${total}</td>
+      <td style="text-align:center;color:#94a3b8">${total?`${wins}W-${total-wins}L`:'--'}</td>
+      <td style="text-align:center;font-weight:700;color:${col}">${rate!=null?rate+'%':'--'}</td>
+      <td><div style="height:5px;background:#1a2444;border-radius:3px"><div style="height:100%;width:${rate||0}%;background:${col};border-radius:3px;transition:width .4s"></div></div></td>
+    </tr>`;
+  }).join('');
+}
+
+// ── CHART ─────────────────────────────────────────────────────────────
+function initChart(){
+  chartObj=new Chart(document.getElementById('myChart').getContext('2d'),{
+    type:'line',
+    data:{labels:[],datasets:[{data:[],borderColor:'#00cfff',backgroundColor:'rgba(0,207,255,.06)',borderWidth:2,tension:.3,fill:true,pointRadius:0}]},
+    options:{responsive:true,maintainAspectRatio:false,animation:false,
+      plugins:{legend:{display:false}},
+      scales:{x:{display:false},y:{ticks:{color:'#4a5580',callback:v=>'$'+v.toLocaleString()},grid:{color:'rgba(255,255,255,.04)'}}}}
+  });
+}
+function updateChart(){
+  if(!chartObj)return;
+  const d=priceHistory.slice(-120);
+  chartObj.data.labels=d.map((_,i)=>i);
+  chartObj.data.datasets[0].data=d;
+  chartObj.update('none');
+}
+
+// ── BYBIT WS ──────────────────────────────────────────────────────────
+function connectBybit(){
+  const ws=new WebSocket('wss://stream.bybit.com/v5/public/linear');
+  ws.onopen=()=>{
+    document.getElementById('ws-dot').classList.add('live');
+    ws.send(JSON.stringify({op:'subscribe',args:['tickers.BTCUSDT','orderbook.1.BTCUSDT','publicTrade.BTCUSDT']}));
+    setInterval(()=>ws.readyState===1&&ws.send(JSON.stringify({op:'ping'})),20000);
+  };
+  ws.onmessage=e=>{
+    let msg; try{msg=JSON.parse(e.data)}catch{return}
+    if(msg.topic==='tickers.BTCUSDT'&&msg.data?.lastPrice){
+      const price=parseFloat(msg.data.lastPrice); if(!price||isNaN(price))return;
+      latestPrice=price; priceHistory.push(price); if(priceHistory.length>500)priceHistory.shift();
+      if(msg.data.bid1Price){bestBid=parseFloat(msg.data.bid1Price);bestBidSize=parseFloat(msg.data.bid1Size||1)}
+      if(msg.data.ask1Price){bestAsk=parseFloat(msg.data.ask1Price);bestAskSize=parseFloat(msg.data.ask1Size||1)}
+      if(!startPrice)openCandle(price);
+      updateChart();
+    }
+    if(msg.topic==='orderbook.1.BTCUSDT'&&msg.data){
+      const d=msg.data;
+      if(d.b?.length>0){bestBid=parseFloat(d.b[0][0]);bestBidSize=parseFloat(d.b[0][1])}
+      if(d.a?.length>0){bestAsk=parseFloat(d.a[0][0]);bestAskSize=parseFloat(d.a[0][1])}
+    }
+    if(msg.topic==='publicTrade.BTCUSDT'&&Array.isArray(msg.data)){
+      for(const t of msg.data){
+        const vol=parseFloat(t.v), p=parseFloat(t.p);
+        if(t.S==='Buy'){cvd+=vol}else{cvd-=vol}
+        vwapNumer+=p*vol; vwapDenom+=vol;
+      }
+    }
+  };
+  ws.onerror=()=>{document.getElementById('ws-dot').classList.remove('live')};
+  ws.onclose=()=>{document.getElementById('ws-dot').classList.remove('live');setTimeout(connectBybit,2000)};
+}
+
+// ── BOOT ──────────────────────────────────────────────────────────────
+initChart();
+electMaster();
+setInterval(tick,100);
+</script>
+</body>
+</html>
